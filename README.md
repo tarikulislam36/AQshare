@@ -1,7 +1,7 @@
 # file-sharing
 A simple peer-to-peer file-sharing 
 <br/>
-**Features**
+**Features:**
 <br/>
 **File Transfer:** Easily send and receive files by connecting to a peer using their unique ID.
 <br/>

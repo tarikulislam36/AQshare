@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Sharing </title>
+</head>
+<body>
+    <h1> File Sharing</h1>
+    <p>Your Peer ID: <span id="peerId">Generating...</span></p>
+    <input type="file" id="fileInput">
+    <button id="sendFile">Send File</button>
+    <input type="text" id="remoteId" placeholder="Enter remote ID">
+    <button id="connect">Connect</button>
+    <br>
+    <p id="status">Status: Disconnected</p>
+    <p id="transferStatus">File Transfer: Not in progress</p>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.2/dist/peerjs.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -16,11 +16,13 @@ let status = document.getElementById('status');
 let transferStatus = document.getElementById('transferStatus');
 let peerIdDisplay = document.getElementById('peerId');
 
+// Display your Peer ID
 peer.on('open', (id) => {
     peerIdDisplay.innerText = id; 
     status.innerText = 'Active';
 });
 
+// Listen for incoming connections
 peer.on('connection', (connection) => {
     conn = connection;
     conn.on('open', () => {
@@ -37,6 +39,7 @@ peer.on('connection', (connection) => {
     });
 });
 
+// Connect to a remote peer
 connectButton.addEventListener('click', () => {
     const remoteId = remoteIdInput.value;
     conn = peer.connect(remoteId);
@@ -50,6 +53,7 @@ connectButton.addEventListener('click', () => {
     });
 });
 
+// Send the selected file to the connected peer
 sendFileButton.addEventListener('click', () => {
     if (conn && fileInput.files.length > 0) {
         const file = fileInput.files[0];
@@ -60,22 +64,20 @@ sendFileButton.addEventListener('click', () => {
         transferStatus.innerText = 'File Transfer: In progress...';
 
         reader.onload = () => {
-            const fileData = reader.result;
+            const fileData = reader.result.split(',')[1]; // Convert to Base64
             conn.send({ file: { name: file.name, data: fileData } });
         };
 
-        reader.readAsArrayBuffer(file);
+        reader.readAsDataURL(file); // Read file as Data URL (Base64 format)
     } else {
         alert('No file selected or no connection established');
     }
 });
 
+// Helper function to download the received file
 function downloadFile(file) {
-    const blob = new Blob([file.data], { type: 'application/octet-stream' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    a.click();
-    window.URL.revokeObjectURL(url);
+    const link = document.createElement('a');
+    link.href = `data:application/octet-stream;base64,${file.data}`;
+    link.download = file.name;
+    link.click();
 }

@@ -1,130 +1,177 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>P2P File Sharing</title>
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.2/dist/peerjs.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.1/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #fileInput {
+            margin-bottom: 10px;
+        }
+        .progress {
+            width: 100%;
+            background-color: #f3f3f3;
+            margin: 5px 0;
+            height: 20px;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #4caf50;
+            width: 0;
+        }
+    </style>
 </head>
-
-<body class="bg-gray-100 min-h-screen flex flex-col items-center p-5">
-    <h1 class="text-3xl font-bold mb-4">P2P File Sharing</h1>
-
-    <!-- Display Peer ID -->
-    <div class="mb-4">
-        <p>Your Peer ID: <span id="peerId" class="font-mono text-blue-600">Generating...</span></p>
+<body>
+    <h1>P2P File Sharing</h1>
+    <div>
+        <input type="file" id="fileInput" multiple>
+        <button id="connect">Connect</button>
+        <input type="text" id="peerId" placeholder="Peer ID">
     </div>
-
-    <!-- File Upload -->
-    <div class="flex gap-2 mb-4">
-        <input type="file" id="fileInput" multiple class="p-2 border border-gray-300 rounded">
-        <button id="sendFile" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Send</button>
-    </div>
-
-    <!-- Connection Details -->
-    <div class="flex gap-2 mb-4">
-        <input type="text" id="remoteId" placeholder="Enter Remote ID"
-            class="p-2 border border-gray-300 rounded">
-        <button id="connect" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Connect</button>
-    </div>
-
-    <p id="status" class="text-gray-700 mb-4">Status: Disconnected</p>
-
-    <!-- Transfer Status -->
-    <div id="transferStatus" class="w-full max-w-xl space-y-4"></div>
-
+    <div id="progressContainer"></div>
     <script>
-        const peer = new Peer({
-            host: '0.peerjs.com',
-            port: 443,
-            path: '/',
-            secure: true,
-        });
-
+        const peer = new Peer();
         let conn;
-        const fileInput = document.getElementById('fileInput');
-        const sendFileButton = document.getElementById('sendFile');
-        const remoteIdInput = document.getElementById('remoteId');
-        const connectButton = document.getElementById('connect');
-        const status = document.getElementById('status');
-        const transferStatus = document.getElementById('transferStatus');
+        const chunkSize = 16 * 1024; // 16KB
+        const fileQueue = [];
+        let isTransferring = false;
 
-        peer.on('open', (id) => {
-            document.getElementById('peerId').innerText = id;
+        const progressContainer = document.getElementById('progressContainer');
+        const fileInput = document.getElementById('fileInput');
+        const peerIdInput = document.getElementById('peerId');
+        const connectButton = document.getElementById('connect');
+
+        peer.on('open', id => {
+            alert(`Your Peer ID: ${id}`);
         });
 
-        peer.on('connection', (connection) => {
+        connectButton.addEventListener('click', () => {
+            const peerId = peerIdInput.value.trim();
+            if (peerId) {
+                conn = peer.connect(peerId);
+                setupConnection();
+            } else {
+                alert('Please enter a Peer ID to connect.');
+            }
+        });
+
+        peer.on('connection', connection => {
             conn = connection;
             setupConnection();
         });
 
-        connectButton.addEventListener('click', () => {
-            const remoteId = remoteIdInput.value.trim();
-            if (remoteId) {
-                conn = peer.connect(remoteId);
-                setupConnection();
-            }
-        });
-
-        sendFileButton.addEventListener('click', () => {
-            if (fileInput.files.length > 0 && conn && conn.open) {
-                Array.from(fileInput.files).forEach(file => sendFile(file));
-            } else {
-                alert('No file selected or no connection established');
-            }
-        });
-
         function setupConnection() {
             conn.on('open', () => {
-                status.innerText = `Connected to ${conn.peer}`;
+                alert('Connection established.');
             });
 
-            conn.on('data', (data) => {
-                if (data.file) {
-                    saveFile(data.file);
-                }
-            });
-
-            conn.on('close', () => {
-                status.innerText = 'Disconnected';
-            });
-
-            conn.on('error', (err) => {
-                console.error(err);
-                status.innerText = 'Error in connection';
-            });
+            conn.on('data', handleIncomingData);
         }
 
-        function sendFile(file) {
+        fileInput.addEventListener('change', () => {
+            const files = fileInput.files;
+            for (const file of files) {
+                fileQueue.push(file);
+            }
+            processQueue();
+        });
+
+        function handleIncomingData(data) {
+            if (data.metadata) {
+                receivedChunks[data.metadata.name] = [];
+                fileMetadata[data.metadata.name] = data.metadata;
+                createProgressBar(data.metadata.name);
+            } else if (data.chunk) {
+                const { fileName, chunk } = data.chunk;
+                receivedChunks[fileName].push(chunk);
+
+                const progress = (receivedChunks[fileName].length / fileMetadata[fileName].totalChunks) * 100;
+                updateProgressBar(fileName, progress);
+
+                if (progress === 100) {
+                    const fileBlob = new Blob(receivedChunks[fileName], { type: fileMetadata[fileName].type });
+                    saveFile(fileBlob, fileName);
+                    delete receivedChunks[fileName];
+                    delete fileMetadata[fileName];
+                }
+            }
+        }
+
+        const receivedChunks = {};
+        const fileMetadata = {};
+
+        function processQueue() {
+            if (isTransferring || fileQueue.length === 0) return;
+
+            isTransferring = true;
+            const file = fileQueue.shift();
             const reader = new FileReader();
+
+            const totalChunks = Math.ceil(file.size / chunkSize);
+            conn.send({ metadata: { name: file.name, type: file.type, totalChunks } });
+
             reader.onload = () => {
-                const data = reader.result;
-                conn.send({ file: { name: file.name, data } });
-                addFileToUI(file.name, 'Sent');
+                const fileData = reader.result;
+                let offset = 0;
+
+                function sendChunk() {
+                    if (offset < fileData.byteLength) {
+                        const chunk = fileData.slice(offset, offset + chunkSize);
+                        conn.send({ chunk: { fileName: file.name, chunk } });
+                        offset += chunkSize;
+
+                        const progress = (offset / fileData.byteLength) * 100;
+                        updateProgressBar(file.name, progress);
+
+                        setTimeout(sendChunk, 10);
+                    } else {
+                        isTransferring = false;
+                        processQueue();
+                        alert(`File ${file.name} sent successfully.`);
+                    }
+                }
+
+                sendChunk();
             };
+
             reader.readAsArrayBuffer(file);
         }
 
-        function saveFile(file) {
-            const blob = new Blob([file.data]);
+        function createProgressBar(fileName) {
+            const progressDiv = document.createElement('div');
+            progressDiv.className = 'progress';
+
+            const progressBar = document.createElement('div');
+            progressBar.className = 'progress-bar';
+            progressBar.id = `progress-${fileName}`;
+
+            progressDiv.appendChild(progressBar);
+            progressContainer.appendChild(progressDiv);
+        }
+
+        function updateProgressBar(fileName, progress) {
+            const progressBar = document.getElementById(`progress-${fileName}`);
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+            }
+        }
+
+        function saveFile(blob, fileName) {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = file.name;
+            a.download = fileName;
             a.click();
             window.URL.revokeObjectURL(url);
-            addFileToUI(file.name, 'Received');
-        }
-
-        function addFileToUI(fileName, statusText) {
-            const div = document.createElement('div');
-            div.className = 'flex justify-between items-center p-2 bg-white border rounded mb-2';
-            div.innerHTML = `<span>${fileName}</span><span>${statusText}</span>`;
-            transferStatus.appendChild(div);
+            alert(`File ${fileName} saved.`);
         }
     </script>
 </body>
-
 </html>

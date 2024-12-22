@@ -29,184 +29,133 @@
 </body>
 
 <script>
-    const peer = new Peer({
-        host: '0.peerjs.com',
-        port: 443,
-        path: '/',
-        secure: true,
-        debug: 3
-    });
+   // Constants
+const chunkSize = 16 * 1024; // 16KB per chunk
+let fileQueue = []; // Queue for outgoing files
+let isTransferring = false;
+let receivedChunks = {}; // Store chunks of incoming files
+let fileMetadata = {}; // Metadata for incoming files
 
-    let conn;
-    let fileQueue = [];
-    let isTransferring = false;
-    let startTime;
-    const fileInput = document.getElementById('fileInput');
-    const sendFileButton = document.getElementById('sendFile');
-    const remoteIdInput = document.getElementById('remoteId');
-    const connectButton = document.getElementById('connect');
-    const status = document.getElementById('status');
-    const transferStatus = document.getElementById('transferStatus');
-    const peerIdDisplay = document.getElementById('peerId');
+// PeerJS Connection Setup
+const peer = new Peer();
+let conn;
 
-    // Display peer ID
-    peer.on('open', (id) => {
-        peerIdDisplay.innerText = id;
-        status.innerText = 'Active';
-    });
+peer.on('open', (id) => {
+    console.log('Peer ID:', id);
+});
 
-    // Handle incoming connections
-    peer.on('connection', (connection) => {
-        conn = connection;
-        setupConnectionHandlers(conn);
-    });
+peer.on('connection', (connection) => {
+    conn = connection;
+    console.log('Connected to:', conn.peer);
 
-    // Establish outgoing connection
-    connectButton.addEventListener('click', () => {
-        const remoteId = remoteIdInput.value;
-        conn = peer.connect(remoteId);
-        setupConnectionHandlers(conn);
-    });
+    conn.on('data', handleIncomingData);
+    conn.on('close', () => console.log('Connection closed'));
+});
 
-    // Setup connection event handlers
-    function setupConnectionHandlers(connection) {
-        conn = connection;
+// File Sending Function
+function sendFile(file) {
+    fileQueue.push(file);
+    processQueue();
+}
 
-        conn.on('open', () => {
-            console.log('Connected to remote peer:', conn.peer);
-            status.innerText = 'Status: Connected to ' + conn.peer;
-        });
+function processQueue() {
+    if (isTransferring || fileQueue.length === 0) return;
 
-        conn.on('data', (data) => {
-            handleIncomingData(data);
-        });
+    isTransferring = true;
+    const file = fileQueue.shift();
+    const reader = new FileReader();
 
-        conn.on('close', () => {
-            console.log('Connection closed with', conn.peer);
-            status.innerText = 'Status: Disconnected';
-        });
+    const totalChunks = Math.ceil(file.size / chunkSize);
+    conn.send({ metadata: { name: file.name, type: file.type, totalChunks } });
 
-        conn.on('error', (err) => {
-            console.error(err);
-            status.innerText = 'Status: Error in connection';
-        });
-    }
+    reader.onload = () => {
+        const fileData = reader.result;
+        let offset = 0;
 
-    // Handle incoming data
-    function handleIncomingData(data) {
-        if (data.file) {
-            downloadFile(data.file);
-            updateProgress(data.file.name, 100, true);
-        } else if (data.status === 'transferring') {
-            transferStatus.innerText = 'File Transfer: In progress...';
-        }
-    }
+        function sendChunk() {
+            if (offset < fileData.byteLength) {
+                const chunk = fileData.slice(offset, offset + chunkSize);
+                conn.send({ chunk: { fileName: file.name, chunk } });
+                offset += chunkSize;
 
-    // Add files to the queue
-    sendFileButton.addEventListener('click', () => {
-        if (fileInput.files.length > 0 && conn) {
-            startTime = Date.now();
-            for (const file of fileInput.files) {
-                fileQueue.push(file);
-                addFileToUI(file);
+                const progress = (offset / fileData.byteLength) * 100;
+                updateProgress(file.name, progress);
+
+                setTimeout(sendChunk, 10);
+            } else {
+                isTransferring = false;
+                processQueue();
+                console.log(`File ${file.name} sent successfully.`);
             }
-            processQueue();
-        } else {
-            alert('No file selected or no connection established');
         }
+        sendChunk();
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+
+// Handling Incoming Data
+function handleIncomingData(data) {
+    if (data.metadata) {
+        // Receiving file metadata
+        fileMetadata[data.metadata.name] = data.metadata;
+        receivedChunks[data.metadata.name] = [];
+        console.log(`Receiving file: ${data.metadata.name}`);
+    } else if (data.chunk) {
+        // Receiving file chunks
+        const { fileName, chunk } = data.chunk;
+        receivedChunks[fileName].push(chunk);
+
+        const progress = (receivedChunks[fileName].length / fileMetadata[fileName].totalChunks) * 100;
+        updateProgress(fileName, progress);
+
+        if (progress === 100) {
+            const fileBlob = new Blob(receivedChunks[fileName], { type: fileMetadata[fileName].type });
+            saveFile(fileBlob, fileName);
+            delete receivedChunks[fileName];
+            delete fileMetadata[fileName];
+        }
+    }
+}
+
+// Save File Locally
+function saveFile(blob, fileName) {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    console.log(`File ${fileName} saved.`);
+}
+
+// Update Progress Bar (Stub Implementation)
+function updateProgress(fileName, progress) {
+    console.log(`Progress for ${fileName}: ${progress.toFixed(2)}%`);
+}
+
+// UI Integration (Example)
+const fileInput = document.getElementById('fileInput');
+const connectButton = document.getElementById('connectButton');
+const peerIdInput = document.getElementById('peerIdInput');
+
+connectButton.addEventListener('click', () => {
+    const peerId = peerIdInput.value;
+    conn = peer.connect(peerId);
+
+    conn.on('open', () => {
+        console.log('Connection opened with:', peerId);
     });
 
-    // Process the file queue
-    function processQueue() {
-        if (isTransferring || fileQueue.length === 0) return;
+    conn.on('data', handleIncomingData);
+});
 
-        isTransferring = true;
-        const file = fileQueue.shift();
-        const reader = new FileReader();
-
-        updateProgress(file.name, 0);
-
-        conn.send({ status: 'transferring' });
-
-        reader.onload = () => {
-            const fileData = reader.result;
-            const chunkSize = 16 * 1024; // 16 KB chunks
-            let offset = 0;
-
-            function sendChunk() {
-                if (offset < fileData.byteLength) {
-                    const chunk = fileData.slice(offset, offset + chunkSize);
-                    conn.send({ file: { name: file.name, data: chunk } });
-                    offset += chunkSize;
-
-                    const progress = Math.min((offset / fileData.byteLength) * 100, 100);
-                    updateProgress(file.name, progress);
-
-                    setTimeout(sendChunk, 10); // Simulate transmission delay
-                } else {
-                    isTransferring = false;
-                    processQueue();
-
-                    const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                    transferStatus.innerText = `Congrats! File transmission completed within ${elapsedTime} seconds.`;
-                }
-            }
-            sendChunk();
-        };
-
-        reader.readAsArrayBuffer(file);
+fileInput.addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (file) {
+        sendFile(file);
     }
-
-    // Cancel a file transfer
-    function cancelFile(fileName) {
-        fileQueue = fileQueue.filter(file => file.name !== fileName);
-        updateProgress(fileName, 0, false, 'Cancelled by user');
-    }
-
-    // Update the progress of a file
-    function updateProgress(fileName, progress, isCompleted = false, statusMessage = '') {
-        const fileElement = document.querySelector(`[data-file="${fileName}"]`);
-        if (fileElement) {
-            const progressBar = fileElement.querySelector('.progress-bar');
-            progressBar.style.width = `${progress}%`;
-            progressBar.classList.toggle('bg-blue-500', isCompleted);
-            progressBar.classList.toggle('bg-red-500', statusMessage !== '');
-
-            const statusText = fileElement.querySelector('.status');
-            statusText.innerText = isCompleted
-                ? 'Completed'
-                : statusMessage || `${progress.toFixed(2)}%`;
-        }
-    }
-
-    // Add file to UI
-    function addFileToUI(file) {
-        const fileElement = document.createElement('div');
-        fileElement.className = 'file-item flex items-center justify-between p-2 border rounded bg-white';
-        fileElement.setAttribute('data-file', file.name);
-        fileElement.innerHTML = `
-        <span>${file.name}</span>
-        <div class="flex items-center gap-2">
-            <div class="progress-bar-container w-40 h-2 bg-gray-200 rounded overflow-hidden">
-                <div class="progress-bar h-2 bg-green-500" style="width: 0%;"></div>
-            </div>
-            <span class="status text-sm"></span>
-            <button class="cancel-button text-red-500" onclick="cancelFile('${file.name}')">✖</button>
-        </div>
-    `;
-        transferStatus.appendChild(fileElement);
-    }
-
-    // Helper function to download a file
-    function downloadFile(file) {
-        const blob = new Blob([file.data], { type: 'application/octet-stream' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        a.click();
-        window.URL.revokeObjectURL(url);
-    }
+});
 
 </script>
 

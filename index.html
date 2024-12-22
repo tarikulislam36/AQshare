@@ -4,159 +4,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Sharing</title>
+    <title>P2P File Sharing</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.2/dist/peerjs.min.js"></script>
-    <script src="script.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-5">
-    <h1 class="text-3xl font-bold mb-4">File Sharing</h1>
+    <h1 class="text-3xl font-bold mb-4">P2P File Sharing</h1>
+
+    <!-- Display Peer ID -->
     <div class="mb-4">
-        <p class="text-lg">Your Peer ID: <span id="peerId" class="font-mono text-blue-600">Generating...</span></p>
+        <p>Your Peer ID: <span id="peerId" class="font-mono text-blue-600">Generating...</span></p>
     </div>
+
+    <!-- File Upload -->
     <div class="flex gap-2 mb-4">
-        <input type="file" id="fileInput" class="file-input w-64 p-2 border border-gray-300 rounded" multiple>
-        <button id="sendFile" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Submit</button>
+        <input type="file" id="fileInput" multiple class="p-2 border border-gray-300 rounded">
+        <button id="sendFile" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Send</button>
     </div>
+
+    <!-- Connection Details -->
     <div class="flex gap-2 mb-4">
-        <input type="text" id="remoteId" placeholder="Enter remote ID"
-            class="input w-64 p-2 border border-gray-300 rounded">
+        <input type="text" id="remoteId" placeholder="Enter Remote ID"
+            class="p-2 border border-gray-300 rounded">
         <button id="connect" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Connect</button>
     </div>
+
     <p id="status" class="text-gray-700 mb-4">Status: Disconnected</p>
+
+    <!-- Transfer Status -->
     <div id="transferStatus" class="w-full max-w-xl space-y-4"></div>
-</body>
 
-<script>
-   // Constants
-const chunkSize = 16 * 1024; // 16KB per chunk
-let fileQueue = []; // Queue for outgoing files
-let isTransferring = false;
-let receivedChunks = {}; // Store chunks of incoming files
-let fileMetadata = {}; // Metadata for incoming files
+    <script>
+        const peer = new Peer({
+            host: '0.peerjs.com',
+            port: 443,
+            path: '/',
+            secure: true,
+        });
 
-// PeerJS Connection Setup
-const peer = new Peer();
-let conn;
+        let conn;
+        const fileInput = document.getElementById('fileInput');
+        const sendFileButton = document.getElementById('sendFile');
+        const remoteIdInput = document.getElementById('remoteId');
+        const connectButton = document.getElementById('connect');
+        const status = document.getElementById('status');
+        const transferStatus = document.getElementById('transferStatus');
 
-peer.on('open', (id) => {
-    console.log('Peer ID:', id);
-});
+        peer.on('open', (id) => {
+            document.getElementById('peerId').innerText = id;
+        });
 
-peer.on('connection', (connection) => {
-    conn = connection;
-    console.log('Connected to:', conn.peer);
+        peer.on('connection', (connection) => {
+            conn = connection;
+            setupConnection();
+        });
 
-    conn.on('data', handleIncomingData);
-    conn.on('close', () => console.log('Connection closed'));
-});
-
-// File Sending Function
-function sendFile(file) {
-    fileQueue.push(file);
-    processQueue();
-}
-
-function processQueue() {
-    if (isTransferring || fileQueue.length === 0) return;
-
-    isTransferring = true;
-    const file = fileQueue.shift();
-    const reader = new FileReader();
-
-    const totalChunks = Math.ceil(file.size / chunkSize);
-    conn.send({ metadata: { name: file.name, type: file.type, totalChunks } });
-
-    reader.onload = () => {
-        const fileData = reader.result;
-        let offset = 0;
-
-        function sendChunk() {
-            if (offset < fileData.byteLength) {
-                const chunk = fileData.slice(offset, offset + chunkSize);
-                conn.send({ chunk: { fileName: file.name, chunk } });
-                offset += chunkSize;
-
-                const progress = (offset / fileData.byteLength) * 100;
-                updateProgress(file.name, progress);
-
-                setTimeout(sendChunk, 10);
-            } else {
-                isTransferring = false;
-                processQueue();
-                console.log(`File ${file.name} sent successfully.`);
+        connectButton.addEventListener('click', () => {
+            const remoteId = remoteIdInput.value.trim();
+            if (remoteId) {
+                conn = peer.connect(remoteId);
+                setupConnection();
             }
+        });
+
+        sendFileButton.addEventListener('click', () => {
+            if (fileInput.files.length > 0 && conn && conn.open) {
+                Array.from(fileInput.files).forEach(file => sendFile(file));
+            } else {
+                alert('No file selected or no connection established');
+            }
+        });
+
+        function setupConnection() {
+            conn.on('open', () => {
+                status.innerText = `Connected to ${conn.peer}`;
+            });
+
+            conn.on('data', (data) => {
+                if (data.file) {
+                    saveFile(data.file);
+                }
+            });
+
+            conn.on('close', () => {
+                status.innerText = 'Disconnected';
+            });
+
+            conn.on('error', (err) => {
+                console.error(err);
+                status.innerText = 'Error in connection';
+            });
         }
-        sendChunk();
-    };
 
-    reader.readAsArrayBuffer(file);
-}
-
-// Handling Incoming Data
-function handleIncomingData(data) {
-    if (data.metadata) {
-        // Receiving file metadata
-        fileMetadata[data.metadata.name] = data.metadata;
-        receivedChunks[data.metadata.name] = [];
-        console.log(`Receiving file: ${data.metadata.name}`);
-    } else if (data.chunk) {
-        // Receiving file chunks
-        const { fileName, chunk } = data.chunk;
-        receivedChunks[fileName].push(chunk);
-
-        const progress = (receivedChunks[fileName].length / fileMetadata[fileName].totalChunks) * 100;
-        updateProgress(fileName, progress);
-
-        if (progress === 100) {
-            const fileBlob = new Blob(receivedChunks[fileName], { type: fileMetadata[fileName].type });
-            saveFile(fileBlob, fileName);
-            delete receivedChunks[fileName];
-            delete fileMetadata[fileName];
+        function sendFile(file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const data = reader.result;
+                conn.send({ file: { name: file.name, data } });
+                addFileToUI(file.name, 'Sent');
+            };
+            reader.readAsArrayBuffer(file);
         }
-    }
-}
 
-// Save File Locally
-function saveFile(blob, fileName) {
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    console.log(`File ${fileName} saved.`);
-}
+        function saveFile(file) {
+            const blob = new Blob([file.data]);
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            addFileToUI(file.name, 'Received');
+        }
 
-// Update Progress Bar (Stub Implementation)
-function updateProgress(fileName, progress) {
-    console.log(`Progress for ${fileName}: ${progress.toFixed(2)}%`);
-}
-
-// UI Integration (Example)
-const fileInput = document.getElementById('fileInput');
-const connectButton = document.getElementById('connectButton');
-const peerIdInput = document.getElementById('peerIdInput');
-
-connectButton.addEventListener('click', () => {
-    const peerId = peerIdInput.value;
-    conn = peer.connect(peerId);
-
-    conn.on('open', () => {
-        console.log('Connection opened with:', peerId);
-    });
-
-    conn.on('data', handleIncomingData);
-});
-
-fileInput.addEventListener('change', (event) => {
-    const file = event.target.files[0];
-    if (file) {
-        sendFile(file);
-    }
-});
-
-</script>
+        function addFileToUI(fileName, statusText) {
+            const div = document.createElement('div');
+            div.className = 'flex justify-between items-center p-2 bg-white border rounded mb-2';
+            div.innerHTML = `<span>${fileName}</span><span>${statusText}</span>`;
+            transferStatus.appendChild(div);
+        }
+    </script>
+</body>
 
 </html>

@@ -1,177 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P File Sharing</title>
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.1/dist/peerjs.min.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-        }
-        #fileInput {
-            margin-bottom: 10px;
-        }
-        .progress {
-            width: 100%;
-            background-color: #f3f3f3;
-            margin: 5px 0;
-            height: 20px;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        .progress-bar {
-            height: 100%;
-            background-color: #4caf50;
-            width: 0;
-        }
-    </style>
+    <title>File Sharing</title>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.2/dist/peerjs.min.js"></script>
+    <script src="script.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <h1>P2P File Sharing</h1>
-    <div>
-        <input type="file" id="fileInput" multiple>
-        <button id="connect">Connect</button>
-        <input type="text" id="peerId" placeholder="Peer ID">
+
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-5">
+    <h1 class="text-3xl font-bold mb-4">File Sharing</h1>
+    <div class="mb-4">
+        <p class="text-lg">Your Peer ID: <span id="peerId" class="font-mono text-blue-600">Generating...</span></p>
     </div>
-    <div id="progressContainer"></div>
-    <script>
-        const peer = new Peer();
-        let conn;
-        const chunkSize = 16 * 1024; // 16KB
-        const fileQueue = [];
-        let isTransferring = false;
+    <div class="flex gap-2 mb-4">
+        <input type="file" id="fileInput" class="file-input w-64 p-2 border border-gray-300 rounded" multiple>
+        <button id="sendFile" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Submit</button>
+    </div>
+    <div class="flex gap-2 mb-4">
+        <input type="text" id="remoteId" placeholder="Enter remote ID"
+            class="input w-64 p-2 border border-gray-300 rounded">
+        <button id="connect" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Connect</button>
+    </div>
+    <p id="status" class="text-gray-700 mb-4">Status: Disconnected</p>
+    <div id="transferStatus" class="w-full max-w-xl space-y-4"></div>
+</body>
 
-        const progressContainer = document.getElementById('progressContainer');
-        const fileInput = document.getElementById('fileInput');
-        const peerIdInput = document.getElementById('peerId');
-        const connectButton = document.getElementById('connect');
+<script>
+    const peer = new Peer({
+        host: '0.peerjs.com',
+        port: 443,
+        path: '/',
+        secure: true,
+        debug: 3
+    });
 
-        peer.on('open', id => {
-            alert(`Your Peer ID: ${id}`);
+    let conn;
+    let fileQueue = [];
+    let isTransferring = false;
+    let startTime;
+    const fileInput = document.getElementById('fileInput');
+    const sendFileButton = document.getElementById('sendFile');
+    const remoteIdInput = document.getElementById('remoteId');
+    const connectButton = document.getElementById('connect');
+    const status = document.getElementById('status');
+    const transferStatus = document.getElementById('transferStatus');
+    const peerIdDisplay = document.getElementById('peerId');
+
+    // Display peer ID
+    peer.on('open', (id) => {
+        peerIdDisplay.innerText = id;
+        status.innerText = 'Active';
+    });
+
+    // Handle incoming connections
+    peer.on('connection', (connection) => {
+        conn = connection;
+        setupConnectionHandlers(conn);
+    });
+
+    // Establish outgoing connection
+    connectButton.addEventListener('click', () => {
+        const remoteId = remoteIdInput.value;
+        conn = peer.connect(remoteId);
+        setupConnectionHandlers(conn);
+    });
+
+    // Setup connection event handlers
+    function setupConnectionHandlers(connection) {
+        conn = connection;
+
+        conn.on('open', () => {
+            console.log('Connected to remote peer:', conn.peer);
+            status.innerText = 'Status: Connected to ' + conn.peer;
         });
 
-        connectButton.addEventListener('click', () => {
-            const peerId = peerIdInput.value.trim();
-            if (peerId) {
-                conn = peer.connect(peerId);
-                setupConnection();
-            } else {
-                alert('Please enter a Peer ID to connect.');
-            }
+        conn.on('data', (data) => {
+            handleIncomingData(data);
         });
 
-        peer.on('connection', connection => {
-            conn = connection;
-            setupConnection();
+        conn.on('close', () => {
+            console.log('Connection closed with', conn.peer);
+            status.innerText = 'Status: Disconnected';
         });
 
-        function setupConnection() {
-            conn.on('open', () => {
-                alert('Connection established.');
-            });
+        conn.on('error', (err) => {
+            console.error(err);
+            status.innerText = 'Status: Error in connection';
+        });
+    }
 
-            conn.on('data', handleIncomingData);
+    // Handle incoming data
+    function handleIncomingData(data) {
+        if (data.file) {
+            downloadFile(data.file);
+            updateProgress(data.file.name, 100, true);
+        } else if (data.status === 'transferring') {
+            transferStatus.innerText = 'File Transfer: In progress...';
         }
+    }
 
-        fileInput.addEventListener('change', () => {
-            const files = fileInput.files;
-            for (const file of files) {
+    // Add files to the queue
+    sendFileButton.addEventListener('click', () => {
+        if (fileInput.files.length > 0 && conn) {
+            startTime = Date.now();
+            for (const file of fileInput.files) {
                 fileQueue.push(file);
+                addFileToUI(file);
             }
             processQueue();
-        });
+        } else {
+            alert('No file selected or no connection established');
+        }
+    });
 
-        function handleIncomingData(data) {
-            if (data.metadata) {
-                receivedChunks[data.metadata.name] = [];
-                fileMetadata[data.metadata.name] = data.metadata;
-                createProgressBar(data.metadata.name);
-            } else if (data.chunk) {
-                const { fileName, chunk } = data.chunk;
-                receivedChunks[fileName].push(chunk);
+    // Process the file queue
+    function processQueue() {
+        if (isTransferring || fileQueue.length === 0) return;
 
-                const progress = (receivedChunks[fileName].length / fileMetadata[fileName].totalChunks) * 100;
-                updateProgressBar(fileName, progress);
+        isTransferring = true;
+        const file = fileQueue.shift();
+        const reader = new FileReader();
 
-                if (progress === 100) {
-                    const fileBlob = new Blob(receivedChunks[fileName], { type: fileMetadata[fileName].type });
-                    saveFile(fileBlob, fileName);
-                    delete receivedChunks[fileName];
-                    delete fileMetadata[fileName];
+        updateProgress(file.name, 0);
+
+        conn.send({ status: 'transferring' });
+
+        reader.onload = () => {
+            const fileData = reader.result;
+            const chunkSize = 16 * 1024; // 16 KB chunks
+            let offset = 0;
+
+            function sendChunk() {
+                if (offset < fileData.byteLength) {
+                    const chunk = fileData.slice(offset, offset + chunkSize);
+                    conn.send({ file: { name: file.name, data: chunk } });
+                    offset += chunkSize;
+
+                    const progress = Math.min((offset / fileData.byteLength) * 100, 100);
+                    updateProgress(file.name, progress);
+
+                    setTimeout(sendChunk, 10); // Simulate transmission delay
+                } else {
+                    isTransferring = false;
+                    processQueue();
+
+                    const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                    transferStatus.innerText = Congrats! File transmission completed within ${elapsedTime} seconds.;
                 }
             }
+            sendChunk();
+        };
+
+        reader.readAsArrayBuffer(file);
+    }
+
+    // Cancel a file transfer
+    function cancelFile(fileName) {
+        fileQueue = fileQueue.filter(file => file.name !== fileName);
+        updateProgress(fileName, 0, false, 'Cancelled by user');
+    }
+
+    // Update the progress of a file
+    function updateProgress(fileName, progress, isCompleted = false, statusMessage = '') {
+        const fileElement = document.querySelector([data-file="${fileName}"]);
+        if (fileElement) {
+            const progressBar = fileElement.querySelector('.progress-bar');
+            progressBar.style.width = ${progress}%;
+            progressBar.classList.toggle('bg-blue-500', isCompleted);
+            progressBar.classList.toggle('bg-red-500', statusMessage !== '');
+
+            const statusText = fileElement.querySelector('.status');
+            statusText.innerText = isCompleted
+                ? 'Completed'
+                : statusMessage || ${progress.toFixed(2)}%;
         }
+    }
 
-        const receivedChunks = {};
-        const fileMetadata = {};
+    // Add file to UI
+    function addFileToUI(file) {
+        const fileElement = document.createElement('div');
+        fileElement.className = 'file-item flex items-center justify-between p-2 border rounded bg-white';
+        fileElement.setAttribute('data-file', file.name);
+        fileElement.innerHTML = `
+        <span>${file.name}</span>
+        <div class="flex items-center gap-2">
+            <div class="progress-bar-container w-40 h-2 bg-gray-200 rounded overflow-hidden">
+                <div class="progress-bar h-2 bg-green-500" style="width: 0%;"></div>
+            </div>
+            <span class="status text-sm"></span>
+            <button class="cancel-button text-red-500" onclick="cancelFile('${file.name}')">✖</button>
+        </div>
+    `;
+        transferStatus.appendChild(fileElement);
+    }
 
-        function processQueue() {
-            if (isTransferring || fileQueue.length === 0) return;
+    // Helper function to download a file
+    function downloadFile(file) {
+        const blob = new Blob([file.data], { type: 'application/octet-stream' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
 
-            isTransferring = true;
-            const file = fileQueue.shift();
-            const reader = new FileReader();
+</script>
 
-            const totalChunks = Math.ceil(file.size / chunkSize);
-            conn.send({ metadata: { name: file.name, type: file.type, totalChunks } });
-
-            reader.onload = () => {
-                const fileData = reader.result;
-                let offset = 0;
-
-                function sendChunk() {
-                    if (offset < fileData.byteLength) {
-                        const chunk = fileData.slice(offset, offset + chunkSize);
-                        conn.send({ chunk: { fileName: file.name, chunk } });
-                        offset += chunkSize;
-
-                        const progress = (offset / fileData.byteLength) * 100;
-                        updateProgressBar(file.name, progress);
-
-                        setTimeout(sendChunk, 10);
-                    } else {
-                        isTransferring = false;
-                        processQueue();
-                        alert(`File ${file.name} sent successfully.`);
-                    }
-                }
-
-                sendChunk();
-            };
-
-            reader.readAsArrayBuffer(file);
-        }
-
-        function createProgressBar(fileName) {
-            const progressDiv = document.createElement('div');
-            progressDiv.className = 'progress';
-
-            const progressBar = document.createElement('div');
-            progressBar.className = 'progress-bar';
-            progressBar.id = `progress-${fileName}`;
-
-            progressDiv.appendChild(progressBar);
-            progressContainer.appendChild(progressDiv);
-        }
-
-        function updateProgressBar(fileName, progress) {
-            const progressBar = document.getElementById(`progress-${fileName}`);
-            if (progressBar) {
-                progressBar.style.width = `${progress}%`;
-            }
-        }
-
-        function saveFile(blob, fileName) {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            a.click();
-            window.URL.revokeObjectURL(url);
-            alert(`File ${fileName} saved.`);
-        }
-    </script>
-</body>
 </html>

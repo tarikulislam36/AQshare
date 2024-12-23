@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -148,7 +148,7 @@
                     processQueue();
 
                     const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                    transferStatus.innerText = Congrats! File transmission completed within ${elapsedTime} seconds.;
+                    transferStatus.innerText = `Congrats! File transmission completed within ${elapsedTime} seconds.`;
                 }
             }
             sendChunk();
@@ -165,17 +165,17 @@
 
     // Update the progress of a file
     function updateProgress(fileName, progress, isCompleted = false, statusMessage = '') {
-        const fileElement = document.querySelector([data-file="${fileName}"]);
+        const fileElement = document.querySelector(`[data-file="${fileName}"]`);
         if (fileElement) {
             const progressBar = fileElement.querySelector('.progress-bar');
-            progressBar.style.width = ${progress}%;
+            progressBar.style.width = `${progress}%`;
             progressBar.classList.toggle('bg-blue-500', isCompleted);
             progressBar.classList.toggle('bg-red-500', statusMessage !== '');
 
             const statusText = fileElement.querySelector('.status');
             statusText.innerText = isCompleted
                 ? 'Completed'
-                : statusMessage || ${progress.toFixed(2)}%;
+                : statusMessage || `${progress.toFixed(2)}%`;
         }
     }
 

@@ -1,12 +1,11 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Sharing</title>
+    <title>File Sharing with Base64</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.2/dist/peerjs.min.js"></script>
-    <script src="script.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
@@ -38,9 +37,6 @@
     });
 
     let conn;
-    let fileQueue = [];
-    let isTransferring = false;
-    let startTime;
     const fileInput = document.getElementById('fileInput');
     const sendFileButton = document.getElementById('sendFile');
     const remoteIdInput = document.getElementById('remoteId');
@@ -73,7 +69,6 @@
         conn = connection;
 
         conn.on('open', () => {
-            console.log('Connected to remote peer:', conn.peer);
             status.innerText = 'Status: Connected to ' + conn.peer;
         });
 
@@ -82,7 +77,6 @@
         });
 
         conn.on('close', () => {
-            console.log('Connection closed with', conn.peer);
             status.innerText = 'Status: Disconnected';
         });
 
@@ -95,119 +89,38 @@
     // Handle incoming data
     function handleIncomingData(data) {
         if (data.file) {
-            downloadFile(data.file);
-            updateProgress(data.file.name, 100, true);
-        } else if (data.status === 'transferring') {
-            transferStatus.innerText = 'File Transfer: In progress...';
+            const decodedData = atob(data.file.data); // Decode Base64
+            const arrayBuffer = new Uint8Array(decodedData.split("").map(char => char.charCodeAt(0)));
+            downloadFile(data.file.name, arrayBuffer);
         }
     }
 
-    // Add files to the queue
+    // Send files as Base64
     sendFileButton.addEventListener('click', () => {
         if (fileInput.files.length > 0 && conn) {
-            startTime = Date.now();
             for (const file of fileInput.files) {
-                fileQueue.push(file);
-                addFileToUI(file);
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64Data = btoa(reader.result); // Encode to Base64
+                    conn.send({ file: { name: file.name, data: base64Data } });
+                };
+                reader.readAsBinaryString(file);
             }
-            processQueue();
         } else {
             alert('No file selected or no connection established');
         }
     });
 
-    // Process the file queue
-    function processQueue() {
-        if (isTransferring || fileQueue.length === 0) return;
-
-        isTransferring = true;
-        const file = fileQueue.shift();
-        const reader = new FileReader();
-
-        updateProgress(file.name, 0);
-
-        conn.send({ status: 'transferring' });
-
-        reader.onload = () => {
-            const fileData = reader.result;
-            const chunkSize = 16 * 1024; // 16 KB chunks
-            let offset = 0;
-
-            function sendChunk() {
-                if (offset < fileData.byteLength) {
-                    const chunk = fileData.slice(offset, offset + chunkSize);
-                    conn.send({ file: { name: file.name, data: chunk } });
-                    offset += chunkSize;
-
-                    const progress = Math.min((offset / fileData.byteLength) * 100, 100);
-                    updateProgress(file.name, progress);
-
-                    setTimeout(sendChunk, 10); // Simulate transmission delay
-                } else {
-                    isTransferring = false;
-                    processQueue();
-
-                    const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                    transferStatus.innerText = `Congrats! File transmission completed within ${elapsedTime} seconds.`;
-                }
-            }
-            sendChunk();
-        };
-
-        reader.readAsArrayBuffer(file);
-    }
-
-    // Cancel a file transfer
-    function cancelFile(fileName) {
-        fileQueue = fileQueue.filter(file => file.name !== fileName);
-        updateProgress(fileName, 0, false, 'Cancelled by user');
-    }
-
-    // Update the progress of a file
-    function updateProgress(fileName, progress, isCompleted = false, statusMessage = '') {
-        const fileElement = document.querySelector(`[data-file="${fileName}"]`);
-        if (fileElement) {
-            const progressBar = fileElement.querySelector('.progress-bar');
-            progressBar.style.width = `${progress}%`;
-            progressBar.classList.toggle('bg-blue-500', isCompleted);
-            progressBar.classList.toggle('bg-red-500', statusMessage !== '');
-
-            const statusText = fileElement.querySelector('.status');
-            statusText.innerText = isCompleted
-                ? 'Completed'
-                : statusMessage || `${progress.toFixed(2)}%`;
-        }
-    }
-
-    // Add file to UI
-    function addFileToUI(file) {
-        const fileElement = document.createElement('div');
-        fileElement.className = 'file-item flex items-center justify-between p-2 border rounded bg-white';
-        fileElement.setAttribute('data-file', file.name);
-        fileElement.innerHTML = `
-        <span>${file.name}</span>
-        <div class="flex items-center gap-2">
-            <div class="progress-bar-container w-40 h-2 bg-gray-200 rounded overflow-hidden">
-                <div class="progress-bar h-2 bg-green-500" style="width: 0%;"></div>
-            </div>
-            <span class="status text-sm"></span>
-            <button class="cancel-button text-red-500" onclick="cancelFile('${file.name}')">✖</button>
-        </div>
-    `;
-        transferStatus.appendChild(fileElement);
-    }
-
     // Helper function to download a file
-    function downloadFile(file) {
-        const blob = new Blob([file.data], { type: 'application/octet-stream' });
+    function downloadFile(fileName, data) {
+        const blob = new Blob([data], { type: 'application/octet-stream' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = file.name;
+        a.download = fileName;
         a.click();
         window.URL.revokeObjectURL(url);
     }
-
 </script>
 
 </html>

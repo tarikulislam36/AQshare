@@ -90,6 +90,8 @@
 
         conn.on('open', () => {
             status.innerText = 'Status: Connected to ' + conn.peer;
+            const hideQR = document.getElementById('qrcode');
+            hideQR.innerHTML = "";
         });
 
         conn.on('data', (data) => {
